@@ -1,0 +1,21 @@
+[project]
+name = "myrag"
+version = "0.2.0"
+description = "Question answering over PDF documents with hybrid retrieval, reranking and cited answers."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+markers = [
+    "integration: needs a running pgvector database (set RAG_TEST_DATABASE=1)",
+]
+
+[tool.ruff]
+line-length = 120
+src = ["src", "."]
+extend-exclude = ["notebooks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["B008"]  # File(...) in argument defaults is the normal FastAPI style

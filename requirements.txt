@@ -1,0 +1,11 @@
+python-dotenv>=1.0.0
+requests>=2.31.0
+pypdf>=4.0.0
+# pypdf needs this to open PDFs that are encrypted to restrict editing
+cryptography>=3.1
+psycopg2-binary>=2.9.9
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.9
+openai>=1.50.0
+anthropic>=1.0.0

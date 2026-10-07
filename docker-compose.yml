@@ -1,0 +1,79 @@
+# Start the database and the app:      docker compose up --build
+# Also start pgAdmin and Jupyter:       docker compose --profile tools up
+#
+# The app reads settings from .env if the file exists (copy .env.example).
+# Values under `environment:` below win over .env, because inside the containers
+# the database is reached as "pgvector" and Ollama runs on the host machine.
+
+services:
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: pgvector-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER:-postgres}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-postgres}
+      POSTGRES_DB: ${PGDATABASE:-vector_db}
+    ports:
+      - "127.0.0.1:${PGPORT:-5432}:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-postgres} -d ${PGDATABASE:-vector_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    container_name: myrag-app
+    restart: unless-stopped
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PGHOST: pgvector
+      PGPORT: 5432
+      OLLAMA_HOST: ${DOCKER_OLLAMA_HOST:-http://host.docker.internal:11434}
+      BOOKS_DIR: data/books
+      LOGS_DIR: logs
+      PROMPTS_DIR: config/prompts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data/books:/app/data/books
+      - ./eval:/app/eval
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    profiles: ["tools"]
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "127.0.0.1:5050:80"
+    depends_on:
+      - pgvector
+
+  jupyter:
+    image: jupyter/datascience-notebook:latest
+    container_name: vector-notebook
+    profiles: ["tools"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8888"
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+    command: start-notebook.sh --NotebookApp.token=''
+
+volumes:
+  pgvector_data:

@@ -1,0 +1,7 @@
+Answer the question using only the numbered sources below. Every sentence that states a fact must end with the number of the source it comes from. {citation_instruction}
+Do not use any knowledge that is not in the sources. If the sources do not contain the answer, say that you could not find it in the documents.
+
+Sources:
+{context}
+
+Question: {query}

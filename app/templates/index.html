@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>myRAG</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+  <style>
+    :root { --bg: #0f0f12; --card: #18181c; --line: #27272a; --text: #e4e4e7; --muted: #8b8b94; --accent: #a78bfa; --ok: #4ade80; --bad: #f87171; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 1.5rem 1rem; line-height: 1.6; }
+    .container { max-width: 760px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
+    h1 { font-size: 1.5rem; margin: 0; }
+    h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 0.6rem; font-weight: 600; }
+    .status { font-size: 0.8rem; color: var(--muted); }
+    .dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; margin-right: 0.35rem; background: var(--muted); }
+    .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+    section { background: var(--card); border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; }
+    textarea { width: 100%; padding: 0.6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; min-height: 84px; resize: vertical; }
+    input[type="file"] { color: var(--muted); font-size: 0.85rem; max-width: 100%; }
+    button { background: var(--accent); color: #14121f; border: none; padding: 0.55rem 1rem; border-radius: 6px; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+    button:hover { opacity: 0.9; } button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.6rem; }
+    .docs { list-style: none; margin: 0 0 0.9rem; padding: 0; font-size: 0.85rem; }
+    .docs li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.3rem 0; border-bottom: 1px solid var(--line); }
+    .docs span:last-child { color: var(--muted); white-space: nowrap; }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    .answer { white-space: pre-wrap; margin-top: 1rem; overflow-wrap: anywhere; }
+    .cite { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .cite:hover { text-decoration: underline; }
+    .sources { margin-top: 1.25rem; }
+    .source { font-size: 0.85rem; padding: 0.6rem 0.75rem; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; margin-bottom: 0.5rem; scroll-margin-top: 1rem; }
+    .source:target { border-color: var(--accent); }
+    .source strong { color: var(--accent); }
+    .source p { margin: 0.25rem 0 0; color: var(--muted); overflow-wrap: anywhere; }
+    .error { color: var(--bad); font-size: 0.9rem; margin: 0.6rem 0 0; }
+    .success { color: var(--ok); font-size: 0.9rem; margin: 0.6rem 0 0; }
+  </style>
+</head>
+<body>
+  <div class="container" x-data="ragApp()" x-init="init()">
+    <header>
+      <h1>myRAG</h1>
+      <div class="status">
+        <span class="dot" :class="health ? (health.database === 'ok' ? 'ok' : 'bad') : ''"></span>
+        <span x-text="statusText()"></span>
+      </div>
+    </header>
+
+    <section>
+      <h2>Documents</h2>
+      <ul class="docs" x-show="documents.length > 0">
+        <template x-for="d in documents" :key="d.book_id">
+          <li><span x-text="d.book_id"></span><span x-text="d.pages + ' pages, ' + d.chunks + ' chunks'"></span></li>
+        </template>
+      </ul>
+      <p class="muted" x-show="documents.length === 0">No documents yet. Upload a PDF to get started.</p>
+      <div class="row">
+        <input type="file" @change="onFileSelect($event)" accept=".pdf" multiple />
+        <button @click="uploadFiles()" :disabled="uploading || selectedFiles.length === 0"
+                x-text="uploading ? 'Ingesting...' : 'Upload and ingest'"></button>
+      </div>
+      <template x-if="uploadMessage">
+        <p :class="uploadSuccess ? 'success' : 'error'" x-text="uploadMessage"></p>
+      </template>
+    </section>
+
+    <section>
+      <h2>Ask a question</h2>
+      <textarea x-model="query" placeholder="What would you like to know about your documents?"
+                @keydown.enter.prevent="if (!$event.shiftKey) submitQuery()"></textarea>
+      <div class="row">
+        <button @click="submitQuery()" :disabled="querying || !query.trim()"
+                x-text="querying ? 'Working...' : 'Ask'"></button>
+        <span class="muted" x-show="querying && !answer" x-text="stage"></span>
+        <span class="muted" x-show="timings" x-text="timingText()"></span>
+      </div>
+
+      <template x-if="queryError"><p class="error" x-text="queryError"></p></template>
+      <div class="answer" x-show="answer" x-html="answerHtml()"></div>
+
+      <div class="sources" x-show="sources.length > 0">
+        <h2>Sources</h2>
+        <template x-for="s in sources" :key="s.number">
+          <div class="source" :id="'source-' + s.number">
+            <strong x-text="'[' + s.number + '] ' + s.book_id"></strong>
+            <span x-text="pageText(s)"></span>
+            <p x-text="s.content_preview + '...'"></p>
+          </div>
+        </template>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    function ragApp() {
+      return {
+        health: null, documents: [],
+        query: '', answer: '', sources: [], timings: null, queryError: null, querying: false, stage: '',
+        selectedFiles: [], uploading: false, uploadMessage: null, uploadSuccess: false,
+
+        async init() {
+          try { this.health = await (await fetch('/health')).json(); } catch (e) { this.health = null; }
+          await this.loadDocuments();
+          // A link such as /?q=What+caused+the+accident asks the question right away.
+          const linked = new URLSearchParams(window.location.search).get('q');
+          if (linked) { this.query = linked; this.submitQuery(); }
+        },
+
+        async loadDocuments() {
+          try {
+            const r = await fetch('/documents');
+            this.documents = r.ok ? (await r.json()).documents : [];
+          } catch (e) { this.documents = []; }
+        },
+
+        statusText() {
+          if (!this.health) return 'Connecting...';
+          if (this.health.database !== 'ok') return 'Database not reachable';
+          return this.health.llm_provider + ' / ' + this.health.llm_model;
+        },
+
+        pageText(s) {
+          return s.page_start === s.page_end ? ' (page ' + s.page_start + ')' : ' (pages ' + s.page_start + '-' + s.page_end + ')';
+        },
+
+        timingText() {
+          const t = this.timings || {};
+          const total = (t.retrieval_seconds || 0) + (t.rerank_seconds || 0) + (t.generation_seconds || 0);
+          return 'Search ' + (t.retrieval_seconds || 0).toFixed(1) + 's, rerank ' + (t.rerank_seconds || 0).toFixed(1)
+            + 's, answer ' + (t.generation_seconds || 0).toFixed(1) + 's, total ' + total.toFixed(1) + 's';
+        },
+
+        // The answer is shown as HTML so that citations like [2] can link to their source.
+        // Everything is escaped first, so text from the model or the documents cannot inject markup.
+        answerHtml() {
+          const escaped = this.answer.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+          const known = new Set(this.sources.map(s => String(s.number)));
+          return escaped.replace(/\[(\d+)\]/g, (m, n) => known.has(n) ? '<a class="cite" href="#source-' + n + '">[' + n + ']</a>' : m);
+        },
+
+        onFileSelect(e) {
+          this.selectedFiles = Array.from(e.target.files || []);
+          this.uploadMessage = null;
+        },
+
+        async uploadFiles() {
+          if (this.selectedFiles.length === 0) return;
+          this.uploading = true;
+          this.uploadMessage = null;
+          const form = new FormData();
+          this.selectedFiles.forEach(f => form.append('files', f));
+          try {
+            const r = await fetch('/upload', { method: 'POST', body: form });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.detail || 'Upload failed');
+            this.uploadSuccess = data.results.every(x => x.ok);
+            this.uploadMessage = data.results.map(x => x.filename + (x.ok ? ': ' + x.chunks + ' chunks stored' : ': ' + (x.error || 'failed'))).join('; ');
+            this.selectedFiles = [];
+            await this.loadDocuments();
+          } catch (err) {
+            this.uploadSuccess = false;
+            this.uploadMessage = err.message || 'Upload failed';
+          }
+          this.uploading = false;
+        },
+
+        handleEvent(event) {
+          if (event.type === 'sources') { this.sources = event.sources; this.stage = 'Writing the answer...'; }
+          else if (event.type === 'token') { this.answer += event.text; }
+          else if (event.type === 'done') { this.timings = event.timings; }
+          else if (event.type === 'error') { this.queryError = event.message; }
+        },
+
+        async submitQuery() {
+          if (!this.query.trim() || this.querying) return;
+          this.querying = true;
+          this.answer = ''; this.sources = []; this.timings = null; this.queryError = null;
+          this.stage = 'Searching the documents...';
+          try {
+            const r = await fetch('/query/stream', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: this.query }),
+            });
+            if (!r.ok) throw new Error((await r.json()).detail || 'Query failed');
+
+            // The server sends events as "data: {...}" blocks separated by a blank line.
+            const reader = r.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const blocks = buffer.split('\n\n');
+              buffer = blocks.pop();
+              for (const block of blocks) {
+                if (block.startsWith('data: ')) this.handleEvent(JSON.parse(block.slice(6)));
+              }
+            }
+          } catch (err) {
+            this.queryError = err.message || 'Query failed';
+          }
+          this.querying = false;
+        },
+      };
+    }
+  </script>
+</body>
+</html>
